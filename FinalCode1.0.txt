@@ -1,0 +1,114 @@
+
+
+
+
+
+
+
+require('dotenv').config();
+const express = require('express');
+const { access } = require('fs');
+const OAuthClient = require('intuit-oauth');
+const json2xls = require('json2xls');
+const fs = require('fs');
+
+const app = express();
+const port = 3000;
+const access_token = "";
+
+const oauthClient = new OAuthClient({
+  clientId: process.env.CLIENT_ID,
+  clientSecret: process.env.CLIENT_SECRET,
+  environment: process.env.ENVIRONMENT,
+  redirectUri: 'http://localhost:3000/callback', // Your callback URL
+  // token:{
+  //   realmId: process.env.REALM_ID,
+  //   access_token: "eyJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwiYWxnIjoiZGlyIn0..-YjbTbSwONtH74acRGhnoQ._Tfx8G1t-AcE-N-qxcKISW1wPPeq1o2BjoCwSjfdACsKzXTeTRt-dpHuQEC_S-S4g34DcZNTAKDDNycrXOH2eK90joO5A6So2THYylwEj3RY_EfCNWtKKgebftAv7Sc9CcnAXHhoO3SZyR4muYY-LabpCq5LG4m1llyyQWTo7eaXRYDO-8zSEEDeblXzBvXZBBpgd64G9KNwkh-_dO0fUHS1rPGHOGD-_IuV39IKHxJAsjbgL66JnImlMktH7aqYX-TRz5eqlp3aNLxTFI9-C209gVG2r0wpOtySOn8eJcdMrsQCxXKGiCbGEWideq5TCAcUHuxUlqVAQ9Gx1aBx2d5DScAeN_SN9d6nr2ZMHw7c2l8f4h978dvnmmNuMUdDxsN_4VpGrjfSs0-hgNBxXhiJ5LdihMYRqc283vHdqdazvV03b9Reuxyl5k2H14y9fsGw-muP5tRXJ3Z0KqCGb_tA-D2V3vCFD5loOStRyb4yBc5WxPROyGM6Nq6ifGnbQu8jPH09UqYjbL7HasHEOxHqER5ELSTooxomVCabjmRgh96Od_E-N1OgrhWUs_tn-fhd5bfBDLlhmWNu_bIG8bfjxSsd3_CXnTCvXt6p5CEbC3lmhXZGHOCLn-3OLAOAqfFAyEiD6J4wwiVVtma4LUjWe53etBDYjDG6_RxWJhu1pOHttsRC_dXNOJMKM4avO7yFMiDWbBJDEhp6sNAtI1AJC4x8ihswIyh23lHSm1k.InfpY2h1ge-nCtbxRaSZpQ",
+  //   refresh_token: 'AB11722449274aA018REIL4rxmt4FQiu2vguWPokwK4r2OZdQJ',
+  // }
+});
+
+console.log(oauthClient);
+
+// Step 1: Generate authorization URL
+app.get('/authUri', (req, res) => {
+  const authUri = oauthClient.authorizeUri({
+    scope: [OAuthClient.scopes.Accounting, OAuthClient.scopes.OpenId, OAuthClient.scopes.Payment],
+    state: 'intuit-test', // Optional state parameter
+  });
+  res.redirect(`${authUri}`);
+});
+
+
+// Step 2: Handle callback
+app.get('/callback', (req, res) => {
+  oauthClient.createToken(req.url)
+    .then(async (tokenResponse) => {
+      // Handle the tokenResponse (e.g., save tokens to your database)
+      oauthClient.setToken(tokenResponse.token);
+
+      const realmId = oauthClient.getToken().realmId; // Get realmId from query params
+      const accessToken = oauthClient.getToken().access_token;
+
+      try {
+        const response = await oauthClient.makeApiCall({
+          url: `https://sandbox-quickbooks.api.intuit.com/v3/company/${realmId}/query?query=select * from customer&minorversion=70`,
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${accessToken}` // Include access token in the headers
+          },
+        });
+        //console.log(response.body.QueryResponse.Customer)
+        const customerData = response.body.QueryResponse.Customer;
+        console.log(customerData)
+        // Assuming customerData contains the JSON data
+        /*
+        // Convert JSON to xlsx format
+        const xls = json2xls(customerData);
+
+        // Write xlsx data to a file
+        const filePath = 'customers.xlsx';
+        fs.writeFileSync(filePath, xls, 'binary');
+
+        console.log(`Data written to ${filePath}`);
+        */
+
+        // Extract BillAddr data from each customer object
+        const extractedData = customerData.map(customer => ({
+          GivenName: customer.GivenName,
+          FamilyName: customer.FamilyName,
+          CompanyName: customer.CompanyName,
+          PrimaryEmailAddress: customer.PrimaryEmailAddr
+        }));
+        
+        // Convert extracted data to xlsx format
+        const xls = json2xls(extractedData);
+        
+        // Write xlsx data to a file
+        const filePath = 'customers.xlsx';
+        fs.writeFileSync(filePath, xls, 'binary');
+        
+        console.log(`Data written to ${filePath}`);
+
+        console.log("Here is the response body-------------------------", response.body);
+        res.send('Authorization successful!'); // Redirect the user to a success page
+      } catch (error) {
+        console.error('Error making API call:', error);
+        res.status(500).send('Error making API call: ' + error.message);
+      }
+    })
+    .catch((error) => {
+      console.error('Error exchanging authorization code:', error);
+      res.status(500).send('Error exchanging authorization code: ' + error.message);
+    });
+});
+
+
+
+
+
+app.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}`);
+});
+
